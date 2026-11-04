@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CTI Camera Follow</title>
+<link rel="icon" href="/favicon.ico">
+<link rel="apple-touch-icon" href="/icon.png">
+<style>
+:root{--bg:#0f1115;--panel:#171a21;--line:#262b36;--tx:#e6e8ee;--mut:#8a91a3;--acc:#3b82f6;--ok:#22c55e;--bad:#ef4444;--warn:#f59e0b;--live:#e11d48}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.4 system-ui,Segoe UI,Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+h1{font-size:16px;margin:0 12px 0 0;letter-spacing:.3px}
+.pill{padding:3px 10px;border-radius:99px;background:var(--line);font-size:12px;color:var(--mut)}
+.pill.ok{background:#14532d;color:#bbf7d0}.pill.bad{background:#7f1d1d;color:#fecaca}.pill.live{background:var(--live);color:#fff}
+main{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px;padding:14px 16px;max-width:1500px;margin:auto}
+@media(max-width:1000px){main{grid-template-columns:1fr}}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+section h2{font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);margin:0 0 10px}
+.cams{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.cam{border:3px solid var(--line);border-radius:8px;overflow:hidden;background:#000;position:relative}
+.cam.on{border-color:var(--live)}
+.view{position:relative;width:100%;aspect-ratio:16/9;background:#05060a}
+.view img,.view iframe{position:absolute;inset:0;width:100%;height:100%;border:0;object-fit:cover;display:block}
+.view iframe{pointer-events:none;background:#000}
+.cam .bar{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:#0b0d12;font-size:12px}
+.tag{position:absolute;top:8px;left:8px;background:var(--live);color:#fff;font-weight:700;font-size:11px;padding:2px 7px;border-radius:4px;display:none}
+.cam.on .tag{display:block}
+button{background:#232838;color:var(--tx);border:1px solid #323a4d;border-radius:6px;padding:6px 10px;cursor:pointer;font:inherit}
+button:hover{border-color:var(--acc)}button.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+button.sel{background:var(--acc);border-color:var(--acc);color:#fff}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--mut);font-weight:500;font-size:12px}
+tr.act td{background:#1e3a2a}tr.tgt td{background:#3b1d2a}
+input,select,textarea{background:#0b0d12;color:var(--tx);border:1px solid #323a4d;border-radius:6px;padding:5px 7px;font:inherit}
+input.p{width:58px}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;background:#333}
+.dot.on{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.pad{display:grid;grid-template-columns:repeat(3,52px);gap:6px;justify-content:start}
+.pad button{height:46px;font-size:18px;user-select:none;touch-action:none}
+.log{height:220px;overflow:auto;background:#0b0d12;border-radius:6px;padding:8px;font:12px/1.5 ui-monospace,Consolas,monospace;color:#b9c0d0;white-space:pre-wrap}
+textarea{width:100%;height:320px;font:12px ui-monospace,Consolas,monospace}
+.mut{color:var(--mut);font-size:12px}
+.scroll{max-height:460px;overflow:auto}
+</style>
+</head>
+<body>
+<header>
+  <img src="/icon.png" alt="" width="28" height="28" style="border-radius:6px">
+  <h1>CTI Camera Follow</h1>
+  <span id="pCcs" class="pill">CCS</span>
+  <span id="pObs" class="pill">OBS</span>
+  <span id="pVcam" class="pill">Virtual Cam</span>
+  <span id="pMode" class="pill">Mod</span>
+  <span id="pTarget" class="pill">—</span>
+  <span style="flex:1"></span>
+  <button id="bRepair" onclick="runRepair()">Diagnostic / Reparare</button>
+  <span id="pVer" class="pill" title="Verifică actualizări" style="cursor:pointer" onclick="checkUpd()">v—</span>
+</header>
+<div id="updBar" style="display:none;background:#14532d;color:#dcfce7;padding:8px 16px;align-items:center;gap:10px">
+  <span id="updTxt"></span>
+  <button class="pri" onclick="installUpd()">Actualizează acum</button>
+  <span class="mut" style="color:#bbf7d0">Aplicația se închide și pornește din nou după instalare.</span>
+</div>
+<div id="repBox" style="display:none;margin:12px 16px 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel)">
+  <div style="display:flex;justify-content:space-between;align-items:center"><b>Diagnostic / Reparare</b><button onclick="$('repBox').style.display='none'">Închide</button></div>
+  <div id="repList" style="margin-top:8px;font-size:13px;line-height:1.7"></div>
+</div>
+<main>
+<div style="display:grid;gap:14px;align-content:start">
+  <section>
+    <h2>Live</h2>
+    <div class="cams">
+      <div class="cam" id="cam1"><span class="tag">LIVE</span><div class="view"><img id="img1" alt=""><iframe id="vid1" allow="autoplay" hidden></iframe></div><div class="bar"><b id="lbl1">CAM 1</b><span id="pos1" class="mut"></span><button onclick="cut(1)">CUT</button></div></div>
+      <div class="cam" id="cam2"><span class="tag">LIVE</span><div class="view"><img id="img2" alt=""><iframe id="vid2" allow="autoplay" hidden></iframe></div><div class="bar"><b id="lbl2">CAM 2</b><span id="pos2" class="mut"></span><button onclick="cut(2)">CUT</button></div></div>
+    </div>
+    <div class="row">
+      <button id="bAuto" onclick="setMode('auto')">AUTO</button>
+      <button id="bMan" onclick="setMode('manual')">MANUAL</button>
+      <button onclick="goto('overview')">Overview</button>
+      <button id="bPrev" onclick="togglePrev()">Preview: Video</button>
+      <span class="mut">CUT manual trece în MANUAL. Revii cu AUTO.</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Scaune → presetări</h2>
+    <div class="row" style="margin-top:0;margin-bottom:8px">
+      <button onclick="loadSeats()">Reîncarcă din CCS</button>
+      <button class="pri" onclick="saveMap()">Salvează maparea</button>
+      <span id="seatErr" class="mut"></span>
+    </div>
+    <div class="scroll">
+    <table>
+      <thead><tr><th></th><th>Scaun</th><th>ID</th><th>CAM 1</th><th>CAM 2</th><th></th></tr></thead>
+      <tbody id="seats"></tbody>
+    </table>
+    </div>
+    <p class="mut">📍 salvează poziția curentă a camerei ca preset pentru scaun (număr gol = ID scaun). ▶ testează. Câmp gol = camera nu acoperă scaunul.</p>
+  </section>
+</div>
+
+<div style="display:grid;gap:14px;align-content:start">
+  <section>
+    <h2>Control PTZ</h2>
+    <div class="row" style="margin-top:0">
+      <button id="pc1" onclick="selCam(1)">CAM 1</button>
+      <button id="pc2" onclick="selCam(2)">CAM 2</button>
+      <span class="mut">Viteză</span><input id="spd" type="range" min="1" max="20" value="8">
+    </div>
+    <div class="row" style="align-items:flex-start;gap:16px">
+      <div class="pad">
+        <span></span><button data-dx="0" data-dy="1">▲</button><span></span>
+        <button data-dx="-1" data-dy="0">◀</button><button onclick="ptz({action:'home'})">⌂</button><button data-dx="1" data-dy="0">▶</button>
+        <span></span><button data-dx="0" data-dy="-1">▼</button><span></span>
+      </div>
+      <div style="display:grid;gap:6px">
+        <button data-zoom="1" style="height:46px">Zoom +</button>
+        <button data-zoom="-1" style="height:46px">Zoom −</button>
+      </div>
+    </div>
+    <div class="row">
+      <span class="mut">Preset</span><input id="pnum" class="p" type="number" min="0" max="254" value="1">
+      <button onclick="ptz({action:'recall',preset:+pnum.value})">Recall</button>
+      <button onclick="ptz({action:'store',preset:+pnum.value})">Salvează</button>
+      <button onclick="ovStore()">Salvează ca Overview</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Jurnal</h2>
+    <div class="log" id="log"></div>
+  </section>
+
+  <section>
+    <h2>Configurare</h2>
+    <div class="row" style="margin-top:0;margin-bottom:8px">
+      <button onclick="loadCfg()">Încarcă</button>
+      <button class="pri" onclick="saveCfg()">Salvează</button>
+      <button onclick="prov()">Reconfigurează OBS</button>
+      <button onclick="dbg()">Debug CCS</button>
+      <button onclick="diag()">Diagnostic rețea</button>
+    </div>
+    <textarea id="cfg" spellcheck="false"></textarea>
+  </section>
+</div>
+</main>
+
+<script>
+let cam = 1, st = {}, seatRows = [], videoOn = false;
+let prevMode = 'video';
+try { prevMode = localStorage.getItem('prevMode') || 'video'; } catch(e) {}
+const $ = id => document.getElementById(id);
+const api = (u, b) => fetch(u, b === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)}).then(r => r.json());
+
+function pill(el, cls, txt){ el.className = 'pill ' + cls; el.textContent = txt; }
+function posTxt(p){ if(!p) return ''; if(p==='overview') return 'overview'; const r = seatRows.find(x=>x.id===p); return r ? r.name : 'scaun '+p; }
+
+async function tick(){
+  try{
+    st = await api('/api/status');
+    pill($('pCcs'), st.ccs_ok?'ok':'bad', st.ccs_ok?'CCS OK':'CCS: '+(st.ccs_err||'offline'));
+    pill($('pObs'), st.obs_ok?'ok':'bad', st.obs_ok?'OBS OK':'OBS offline');
+    pill($('pVcam'), st.vcam?'ok':'bad', st.vcam?'Virtual Cam ON':'Virtual Cam OFF');
+    pill($('pMode'), st.mode==='auto'?'live':'', st.mode.toUpperCase());
+    $('pVer').textContent = 'v' + (st.version || '?');
+    if (st.update && st.update.available){
+      $('updTxt').textContent = `Versiune nouă disponibilă: ${st.update.available} (instalată: ${st.version})`;
+      $('updBar').style.display = 'flex';
+    } else $('updBar').style.display = 'none';
+    $('pTarget').textContent = st.target ? 'Țintă: ' + (st.target==='overview'?'Overview':posTxt(st.target)) : '—';
+    $('bAuto').className = st.mode==='auto'?'sel':''; $('bMan').className = st.mode==='manual'?'sel':'';
+    setVideo(prevMode === 'video' && st.preview && st.preview.running);
+    if (st.cams_on) for (const c of [1,2]){
+      const on = st.cams_on[c] !== false;
+      $('cam'+c).style.display = on ? '' : 'none';
+      $('pc'+c).style.display = on ? '' : 'none';
+      document.querySelectorAll(`#seats [data-c="${c}"]`).forEach(i=>{ i.parentElement.style.display = on ? '' : 'none'; });
+      document.querySelectorAll('thead th')[2+c] && (document.querySelectorAll('thead th')[2+c].style.display = on ? '' : 'none');
+      if (!on && cam === c) selCam(c === 1 ? 2 : 1);
+    }
+    for (const c of [1,2]){
+      $('cam'+c).classList.toggle('on', st.live_cam==String(c));
+      $('lbl'+c).textContent = st.cams[c];
+      const off = st.cams_online && st.cams_online[c] === false;
+      $('pos'+c).textContent = off ? 'OFFLINE' : posTxt(st.cam_pos[c]);
+      $('pos'+c).style.color = off ? '#ef4444' : '';
+    }
+    document.querySelectorAll('#seats tr').forEach(tr=>{
+      tr.classList.toggle('act', st.raw_active.includes(tr.dataset.id));
+      tr.classList.toggle('tgt', st.target===tr.dataset.id);
+      tr.querySelector('.dot').classList.toggle('on', st.raw_active.includes(tr.dataset.id));
+    });
+    const lg = $('log'), atBottom = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 20;
+    lg.textContent = st.log.join('\n'); if (atBottom) lg.scrollTop = lg.scrollHeight;
+  }catch(e){ pill($('pCcs'),'bad','server offline'); }
+}
+function setVideo(on){
+  $('bPrev').textContent = prevMode === 'video' ? (on ? 'Preview: Video' : 'Preview: Video (indisponibil)') : 'Preview: Captură OBS';
+  if (on === videoOn) return;
+  videoOn = on;
+  for (const c of [1,2]){
+    const f = $('vid'+c);
+    if (on){ f.src = `${location.protocol}//${location.hostname}:${st.preview.port}/stream.html?src=cam${c}&mode=webrtc,mse`; f.hidden = false; $('img'+c).hidden = true; }
+    else { f.src = 'about:blank'; f.hidden = true; $('img'+c).hidden = false; }
+  }
+}
+function togglePrev(){
+  prevMode = prevMode === 'video' ? 'snap' : 'video';
+  try { localStorage.setItem('prevMode', prevMode); } catch(e) {}
+  setVideo(prevMode === 'video' && st.preview && st.preview.running);
+}
+async function previews(){
+  if (videoOn) return;
+  for (const c of [1,2]){
+    try{ const r = await api('/api/preview/'+c); if (r.img) $('img'+c).src = r.img; }catch(e){}
+  }
+}
+async function loadSeats(){
+  const r = await api('/api/seats'); seatRows = r.rows;
+  $('seatErr').textContent = r.error ? 'CCS: '+r.error : '';
+  $('seats').innerHTML = r.rows.map(s=>`<tr data-id="${s.id}">
+    <td><span class="dot"></span></td><td>${s.name}${s.connected===false?' <span class="mut">(deconectat)</span>':''}</td><td class="mut">${s.id}</td>
+    <td><input class="p" data-c="1" type="number" min="0" max="254" value="${s.p1??''}"> <button title="Salvează poziția CAM 1" onclick="seatStore('${s.id}',1,this)">📍</button></td>
+    <td><input class="p" data-c="2" type="number" min="0" max="254" value="${s.p2??''}"> <button title="Salvează poziția CAM 2" onclick="seatStore('${s.id}',2,this)">📍</button></td>
+    <td><button onclick="goto('${s.id}')">▶</button></td></tr>`).join('');
+}
+function collect(){
+  const seats = {};
+  document.querySelectorAll('#seats tr').forEach(tr=>{
+    const m = {}; tr.querySelectorAll('input').forEach(i=>{ if(i.value!=='') m[i.dataset.c] = +i.value; });
+    seats[tr.dataset.id] = m;
+  });
+  return seats;
+}
+async function saveMap(){ await api('/api/mapping', {seats: collect()}); }
+async function seatStore(id, c, btn){
+  await saveMap();
+  const inp = btn.parentElement.querySelector('input');
+  const r = await api('/api/seat_store', {seat:id, cam:c, preset: inp.value===''?null:+inp.value});
+  inp.value = r.preset;
+}
+function selCam(c){ cam = c; $('pc1').className = c===1?'sel':''; $('pc2').className = c===2?'sel':''; }
+function ptz(b){ return api('/api/ptz', Object.assign({cam, speed:+$('spd').value}, b)); }
+async function ovStore(){ const r = await api('/api/overview_store', {cam}); $('pnum').value = r.preset; }
+function cut(c){ api('/api/cut', {cam:c}); }
+function setMode(m){ api('/api/mode', {mode:m}); }
+function goto(t){ api('/api/goto', {target:t}); }
+async function loadCfg(){ $('cfg').value = JSON.stringify(await api('/api/config'), null, 2); }
+async function saveCfg(){
+  let j; try{ j = JSON.parse($('cfg').value); }catch(e){ alert('JSON invalid: '+e.message); return; }
+  j.seats = collect(); await api('/api/config', j); loadCfg();
+}
+async function prov(){ const r = await api('/api/provision', {}); if(!r.ok) alert(r.error); }
+const ICON = {ok:'✅', fix:'🔧', warn:'⚠️', bad:'❌', info:'ℹ️'};
+async function runRepair(){
+  $('repBox').style.display = 'block';
+  $('repList').textContent = 'Verific CCS, camere, OBS și preview... (până la ~1 minut)';
+  $('bRepair').disabled = true;
+  try{
+    const r = await api('/api/repair', {});
+    $('repList').innerHTML = r.items.map(i=>`<div>${ICON[i.level]||''} ${i.msg.replace(/</g,'&lt;')}</div>`).join('');
+    loadCfg(); loadSeats();
+  }catch(e){ $('repList').textContent = 'Eroare: ' + e; }
+  $('bRepair').disabled = false;
+}
+window.runRepair = runRepair;
+async function checkUpd(){
+  $('pVer').textContent = 'verific...';
+  const r = await api('/api/update/check', {});
+  if (!r.ok) alert('Verificare actualizări eșuată: ' + r.error);
+  else if (!r.latest) alert(`Ai ultima versiune (${r.current}).` + (r.error ? '\n' + r.error : ''));
+}
+async function installUpd(){
+  if (!confirm('Descarc și instalez versiunea nouă? Windows va cere confirmare de Administrator.')) return;
+  $('updTxt').textContent = 'Descarc actualizarea...';
+  const r = await api('/api/update/install', {});
+  if (!r.ok) alert('Actualizare eșuată: ' + r.error);
+  else $('updTxt').textContent = 'Instalarea a pornit. Confirmă fereastra Windows.';
+}
+async function diag(){ $('cfg').value = 'Testez...'; $('cfg').value = JSON.stringify(await api('/api/diag'), null, 2); }
+async function dbg(){ $('cfg').value = JSON.stringify(await api('/api/debug'), null, 2); }
+
+// PTZ hold-to-move
+document.querySelectorAll('[data-dx]').forEach(b=>{
+  const go = e=>{ e.preventDefault(); b.setPointerCapture?.(e.pointerId); ptz({action:'move', dx:+b.dataset.dx, dy:+b.dataset.dy}); };
+  const stop = ()=> ptz({action:'stop'});
+  b.addEventListener('pointerdown', go); b.addEventListener('pointerup', stop); b.addEventListener('pointercancel', stop);
+});
+document.querySelectorAll('[data-zoom]').forEach(b=>{
+  b.addEventListener('pointerdown', e=>{ e.preventDefault(); b.setPointerCapture?.(e.pointerId); ptz({action:'zoom', dir:+b.dataset.zoom}); });
+  const stop = ()=> ptz({action:'zoom', dir:0});
+  b.addEventListener('pointerup', stop); b.addEventListener('pointercancel', stop);
+});
+
+selCam(1); loadSeats(); loadCfg(); tick();
+setInterval(tick, 500); setInterval(previews, 1000);
+</script>
+</body>
+</html>

@@ -1,0 +1,107 @@
+name: Build installer
+
+on:
+  push:
+    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Versiune
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $v = $env:GITHUB_REF_NAME.TrimStart('v') }
+          else { $v = "0.0.$env:GITHUB_RUN_NUMBER" }
+          "APP_VERSION=$v" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          @"
+          VERSION = "$v"
+          REPO = "$env:GITHUB_REPOSITORY"
+          "@ | Set-Content src/cti_version.py -Encoding utf8
+          Get-Content src/cti_version.py
+
+      - name: Dependinte Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Test import
+        shell: pwsh
+        env:
+          CTI_DATA_DIR: ${{ runner.temp }}\cti-data
+        run: python -c "import sys; sys.path.insert(0,'src'); import app, launcher, webview, pystray; print('import OK', app.VERSION)"
+
+      - name: Descarc go2rtc si ffmpeg
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          New-Item -ItemType Directory -Force bin\go2rtc | Out-Null
+          Invoke-WebRequest https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_win64.zip -OutFile g.zip
+          Expand-Archive g.zip bin\go2rtc -Force
+          Invoke-WebRequest https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip -OutFile ff.zip
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $z = [IO.Compression.ZipFile]::OpenRead("$PWD\ff.zip")
+          $e = $z.Entries | Where-Object { $_.FullName -like '*/bin/ffmpeg.exe' } | Select-Object -First 1
+          [IO.Compression.ZipFileExtensions]::ExtractToFile($e, "$PWD\bin\go2rtc\ffmpeg.exe", $true)
+          $z.Dispose()
+          Get-ChildItem bin\go2rtc
+
+      - name: PyInstaller
+        run: pyinstaller --noconfirm --clean cti.spec
+
+      - name: Asamblare folder aplicatie
+        shell: pwsh
+        run: |
+          Copy-Item bin\go2rtc "dist\CTI Camera Follow\go2rtc" -Recurse -Force
+          Get-ChildItem "dist\CTI Camera Follow" | Select-Object Name, Length
+
+      - name: Test pornire (fara fereastra)
+        shell: pwsh
+        env:
+          CTI_DATA_DIR: ${{ runner.temp }}\cti-data
+        run: |
+          $p = Start-Process "dist\CTI Camera Follow\CTI Camera Follow.exe" -ArgumentList '--nogui' -PassThru
+          $ok = $false
+          foreach ($i in 1..40) {
+            Start-Sleep 1
+            try { $s = Invoke-RestMethod http://127.0.0.1:28080/api/status -TimeoutSec 2; $ok = $true; break } catch {}
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Get-Process go2rtc -ErrorAction SilentlyContinue | Stop-Process -Force
+          if (-not $ok) {
+            Get-Content "$env:CTI_DATA_DIR\camera_follow.log" -ErrorAction SilentlyContinue
+            throw "aplicatia nu a raspuns pe 28080"
+          }
+          "versiune raportata: $($s.version)"
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAppVer=$env:APP_VERSION" "/DSrcDir=..\dist\CTI Camera Follow" installer\setup.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC a esuat" }
+          Get-ChildItem dist\*.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CTI-CameraFollow-Setup-${{ env.APP_VERSION }}
+          path: dist/CTI-CameraFollow-Setup-*.exe
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/CTI-CameraFollow-Setup-*.exe
+          generate_release_notes: true
